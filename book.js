@@ -6,20 +6,17 @@
  *   spine = 1536 … 1882 px  (346 wide)
  *   front = 1882 … 3418 px  (1536 wide)
  * - Accent / bare-board colour: #FF5D00
- * - Pages fetched from Google Sheets (configured below)
+ * - Pages fetched from Google Apps Script Web App
  * - Navigation: ← → arrow keys OR click left / right 50 % of screen
  */
 
 /* ═══════════════════════════════════════════════════════════════════
-   CONFIGURATION  –  edit these values for your deployment
+   CONFIGURATION
    ═══════════════════════════════════════════════════════════════════ */
 var CONFIG = {
-  // Google Sheets published-CSV URL.
-  // Sheet layout expected:
-  //   A1  = "pages"   (header / label)
-  //   A2… = page numbers: 1, 2, 3, 4 …  (one per row)
-  // Replace SHEET_ID with your actual spreadsheet ID.
-  SHEET_CSV_URL: 'https://docs.google.com/spreadsheets/d/SHEET_ID/gviz/tq?tqx=out:csv&sheet=Sheet1',
+  // Google Apps Script Web App URL – returns JSON with page numbers.
+  // Expected response: { "pages": [1, 2, 3, ...] }
+  GS_API_URL: 'https://script.google.com/macros/s/AKfycbwMew0JzgQMa3jU59xI9Ipzks1vpWw0zi_XXCOEBhQHnO9cw6qED00KD1Mu1LXhs6yXiQ/exec',
 
   // Folder (relative or absolute URL) that contains 1.txt, 2.txt, etc.
   PAGES_FOLDER: 'pages/',
@@ -60,35 +57,44 @@ var CONFIG = {
   var container  = document.getElementById('canvas-container');
 
   /* ══════════════════════════════════════════════════════
-     1.  GOOGLE SHEETS  →  page list
+     1.  GOOGLE APPS SCRIPT  →  page list
+     ══════════════════════════════════════════════════════
+     Web App returns JSON: { "pages": [1, 2, 3, ...] }
+     or a plain array:    [1, 2, 3, ...]
+     Sheet: A1 = "pages" header, A2… = numbers.
      ══════════════════════════════════════════════════════ */
   function fetchPageList(callback) {
-    var url = CONFIG.SHEET_CSV_URL;
+    var url = CONFIG.GS_API_URL;
     var req = new XMLHttpRequest();
     req.open('GET', url, true);
     req.onload = function () {
       if (req.status >= 200 && req.status < 300) {
-        var nums = parseSheetCSV(req.responseText);
-        callback(null, nums);
+        try {
+          var data = JSON.parse(req.responseText);
+          var nums;
+          if (Array.isArray(data)) {
+            nums = data.map(function (v) { return parseInt(v, 10); })
+                       .filter(function (n) { return !isNaN(n); });
+          } else if (data && Array.isArray(data.pages)) {
+            nums = data.pages.map(function (v) { return parseInt(v, 10); })
+                             .filter(function (n) { return !isNaN(n); });
+          } else {
+            // Fallback: plain text, newline or comma separated
+            nums = String(req.responseText)
+              .split(/[\n,]+/)
+              .map(function (v) { return parseInt(v.replace(/"/g, '').trim(), 10); })
+              .filter(function (n) { return !isNaN(n); });
+          }
+          callback(null, nums);
+        } catch (e) {
+          callback(new Error('Parse error: ' + e.message));
+        }
       } else {
         callback(new Error('HTTP ' + req.status));
       }
     };
     req.onerror = function () { callback(new Error('Network error')); };
     req.send();
-  }
-
-  function parseSheetCSV(csv) {
-    // Each row is one cell (column A).  Row 0 is the header "pages", skip it.
-    var rows = csv.split('\n');
-    var nums = [];
-    for (var i = 1; i < rows.length; i++) {
-      var val = rows[i].replace(/"/g, '').trim();
-      if (val !== '' && !isNaN(parseInt(val, 10))) {
-        nums.push(parseInt(val, 10));
-      }
-    }
-    return nums;
   }
 
   /* ══════════════════════════════════════════════════════
