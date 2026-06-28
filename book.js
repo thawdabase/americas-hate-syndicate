@@ -25,9 +25,12 @@
  */
 
 var CONFIG = {
-  GS_API_URL   : 'https://script.google.com/macros/s/AKfycbwMew0JzgQMa3jU59xI9Ipzks1vpWw0zi_XXCOEBhQHnO9cw6qED00KD1Mu1LXhs6yXiQ/exec',
   PAGES_FOLDER : 'pages/',
   COVER_TEXTURE: 'cover.png',
+  // Image extensions to probe, in priority order
+  IMG_EXTS     : ['png', 'jpg', 'jpeg', 'webp'],
+  // How many pages to scan before giving up (stops at first 404)
+  MAX_PAGES    : 500,
   // Book units (Three.js)
   BW : 1.536,   // cover width
   BH : 2.048,   // cover height
@@ -40,7 +43,7 @@ var CONFIG = {
   'use strict';
 
   /* ── state ── */
-  var pages       = [];   // [{num, text}, …] ordered
+  var pages       = [];   // [{num, type:'image', url}, …] ordered
   var spread      = 0;    // current spread index (0 = front cover closed)
   var maxSpreads  = 0;    // = ceil(pages.length / 2)
   var animating   = false;
@@ -79,101 +82,53 @@ var CONFIG = {
   var container  = document.getElementById('canvas-container');
 
   /* ══════════════════════════════════════════════════
-     GS API parser – handles all nesting shapes
+     IMAGE DISCOVERY
+     Probes pages/1.png, pages/1.jpg … for each page number
+     sequentially until a number yields no file, then stops.
   ══════════════════════════════════════════════════ */
-  function extractNums(raw) {
-    var data;
-    try { data = JSON.parse(raw); } catch(e) { data = null; }
-    var arr = null;
-    if (Array.isArray(data)) {
-      arr = data;
-    } else if (data && typeof data === 'object') {
-      if      (Array.isArray(data.pages))             arr = data.pages;
-      else if (data.data && Array.isArray(data.data.pages)) arr = data.data.pages;
-      else if (data.data && Array.isArray(data.data)) arr = data.data;
-      else {
-        var keys = Object.keys(data);
-        for (var i=0;i<keys.length;i++) {
-          if (Array.isArray(data[keys[i]])) { arr=data[keys[i]]; break; }
-        }
-        if (!arr) {
-          for (var i=0;i<keys.length;i++) {
-            var sub=data[keys[i]];
-            if (sub && typeof sub==='object' && !Array.isArray(sub)) {
-              var sk=Object.keys(sub);
-              for (var j=0;j<sk.length;j++) {
-                if (Array.isArray(sub[sk[j]])) { arr=sub[sk[j]]; break; }
-              }
-              if (arr) break;
-            }
-          }
-        }
-      }
-    }
-    if (arr) return arr.map(function(v){return parseInt(v,10);}).filter(function(n){return !isNaN(n);});
-    return String(raw).split(/[\n,]+/).map(function(v){return parseInt(v.replace(/[^0-9]/g,''),10);}).filter(function(n){return !isNaN(n);});
-  }
 
-  function fetchPageList(cb) {
-    var req=new XMLHttpRequest();
-    req.open('GET',CONFIG.GS_API_URL,true);
-    req.onload=function(){
-      if(req.status>=200&&req.status<300){
-        var nums=extractNums(req.responseText);
-        console.log('[GS] raw:',req.responseText.slice(0,300));
-        console.log('[GS] nums:',nums);
-        cb(null,nums);
-      } else cb(new Error('HTTP '+req.status));
-    };
-    req.onerror=function(){cb(new Error('network'));};
-    req.send();
-  }
-
-  /* Try image extensions first, fall back to .txt */
-  var IMG_EXTS=['png','jpg','jpeg','webp'];
-
-  function resolvePageFile(n,cb){
-    var exts=IMG_EXTS.slice();
-    function tryNext(){
-      if(!exts.length){ tryText(); return; }
-      var ext=exts.shift();
-      var url=CONFIG.PAGES_FOLDER+n+'.'+ext;
-      var req=new XMLHttpRequest();
-      req.open('HEAD',url,true);
-      req.onload=function(){
-        if(req.status>=200&&req.status<300) cb({num:n,type:'image',url:url});
+  /** Probe a single page number; calls cb({num,type:'image',url}) or cb(null) */
+  function probePageNum(n, cb) {
+    var exts = CONFIG.IMG_EXTS.slice();
+    function tryNext() {
+      if (!exts.length) { cb(null); return; }
+      var ext = exts.shift();
+      var url = CONFIG.PAGES_FOLDER + n + '.' + ext;
+      var req = new XMLHttpRequest();
+      req.open('HEAD', url, true);
+      req.onload = function() {
+        if (req.status >= 200 && req.status < 300) cb({ num: n, type: 'image', url: url });
         else tryNext();
       };
-      req.onerror=tryNext;
-      req.send();
-    }
-    function tryText(){
-      var url=CONFIG.PAGES_FOLDER+n+'.txt';
-      var req=new XMLHttpRequest();
-      req.open('GET',url,true);
-      req.onload=function(){
-        if(req.status>=200&&req.status<300) cb({num:n,type:'text',text:req.responseText});
-        else cb({num:n,type:'text',text:'(page '+n+' not found)'});
-      };
-      req.onerror=function(){ cb({num:n,type:'text',text:'(error '+n+')'}); };
+      req.onerror = tryNext;
       req.send();
     }
     tryNext();
   }
 
-  function fetchPageTexts(nums,onProg,cb){
-    var res={},total=nums.length,done=0;
-    if(!total){cb([]);return;}
-    nums.forEach(function(n){
-      resolvePageFile(n,function(pageObj){
-        res[n]=pageObj;
-        if(++done===total) finish(); else onProg(done/total);
+  /**
+   * Discover all page images by probing 1, 2, 3 … sequentially.
+   * Stops when a number has no matching image file.
+   * onProg(fraction) called during scan; cb(pagesArray) when done.
+   */
+  function discoverPages(onProg, cb) {
+    var found = [];
+    var n = 1;
+    function next() {
+      if (n > CONFIG.MAX_PAGES) { cb(found); return; }
+      probePageNum(n, function(pageObj) {
+        if (!pageObj) {
+          // Gap found — stop scanning
+          cb(found);
+        } else {
+          found.push(pageObj);
+          onProg(found.length / CONFIG.MAX_PAGES); // rough progress
+          n++;
+          next();
+        }
       });
-    });
-    function finish(){
-      onProg(1);
-      cb(nums.map(function(n){ return res[n]; }));
     }
+    next();
   }
 
   /* ══════════════════════════════════════════════════
@@ -222,9 +177,8 @@ var CONFIG = {
   }
 
   function getPageCanvas(pageObj){
-    if(!pageObj||pageObj.type==='image') return makeBlankCanvas();
-    if(!pageCanvasCache[pageObj.num]) pageCanvasCache[pageObj.num]=makePageCanvas(pageObj);
-    return pageCanvasCache[pageObj.num];
+    // All pages are images now; blank canvas only as a fallback
+    return makeBlankCanvas();
   }
 
   function makeBlankCanvas(){
@@ -793,23 +747,21 @@ var CONFIG = {
     initThree();
     setProgress(0.05);
 
-    fetchPageList(function(err,nums){
-      if(err||!nums||!nums.length){
-        console.warn('[Book] no pages:',err);
-        pages=[]; maxSpreads=0; updateUI(); hideLoading(); return;
-      }
-      setProgress(0.15);
-      fetchPageTexts(nums,function(f){setProgress(0.15+f*0.8);},function(loaded){
-        pages=loaded;
-        // Each spread (except first and last) shows 2 pages.
-        // spread 1 shows page[0] only on right.
-        // spread 2..n shows pages[2n-3] and pages[2n-2]
-        // So total spreads = ceil((pages.length+1)/2)
-        maxSpreads=Math.ceil((pages.length+1)/2);
+    console.log('[Book] scanning for page images in', CONFIG.PAGES_FOLDER);
+    discoverPages(
+      function(f){ setProgress(0.1 + f * 0.85); },
+      function(loaded){
+        pages = loaded;
+        console.log('[Book] found', pages.length, 'page image(s)');
+        if (!pages.length) {
+          console.warn('[Book] no page images found – check that pages/1.png (or .jpg/.jpeg/.webp) exists');
+        }
+        maxSpreads = Math.ceil((pages.length + 1) / 2);
+        setProgress(1);
         updateUI();
         hideLoading();
-      });
-    });
+      }
+    );
   }
 
   boot();
