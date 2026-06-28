@@ -25,7 +25,7 @@ var CONFIG = {
   PAGES_FOLDER: 'pages/',
 
   // Cover texture (the 3418 × 2048 atlas).
-  COVER_TEXTURE: 'cover.jpg',
+  COVER_TEXTURE: 'cover.png',
 
   // Book physical proportions (Three.js units)
   BOOK_WIDTH:  1.536,   // front/back panel width (1536 / 1000)
