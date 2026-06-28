@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>3D Book Viewer</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- Loading screen -->
+  <div id="loading">
+    <div id="loading-text">Loading book…</div>
+    <div id="loading-bar-track">
+      <div id="loading-bar-fill"></div>
+    </div>
+  </div>
+
+  <!-- Three.js canvas target -->
+  <div id="canvas-container"></div>
+
+  <!-- Click zones -->
+  <div id="click-left"  title="Previous page"></div>
+  <div id="click-right" title="Next page"></div>
+
+  <!-- Arrow hints -->
+  <div class="arrow-hint" id="arrow-left">&#8592;</div>
+  <div class="arrow-hint" id="arrow-right">&#8594;</div>
+
+  <!-- Page indicator -->
+  <div id="page-info">Cover</div>
+
+  <!-- Three.js r128 (non-modular) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+  <!-- App -->
+  <script src="book.js"></script>
+</body>
+</html>
